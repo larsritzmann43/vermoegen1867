@@ -1,76 +1,54 @@
 import { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-
 function App() {
-  const [childAge, setChildAge] = useState(7);
-  const [monthlyPension, setMonthlyPension] = useState(1500);
-
-  const [inflationAdjusted, setInflationAdjusted] = useState(false);
+  const [childAge, setChildAge] = useState(0);
+  const [targetAmount, setTargetAmount] = useState(10000);
+  const [includeInflation, setIncludeInflation] = useState(false);
 
   // Constants
-  const netRateAccumulation = 1.075; // 7.5% p.a.
-  const netRateDecumulation = 1.03;  // 3.0% p.a.
-  const inflationRate = 1.02; // 2.0% p.a.
+  const netRateAccumulation = 1.06; // 6% p.a.
 
   // Derived Calculation
   const { monthlyContribution, data, milestones } = useMemo(() => {
-    // 0. Adjust Target Pension for Inflation if requested
-    const targetPension = inflationAdjusted
-      ? monthlyPension * Math.pow(inflationRate, 67 - childAge)
-      : monthlyPension;
+    const targetAge = 18;
+    const endAge = 67;
 
-    // 1. Calculate Target Consumption Capital at 67
-    // PV of annuity from 67 to 100 (33 years)
-    // Rate per month
-    const i2 = Math.pow(netRateDecumulation, 1 / 12) - 1;
-    const monthsDecumulation = (100 - 67) * 12;
-    // PV = PMT * (1 - (1+i)^-n) / i
-    // Assuming end-of-month payout (Ordinary Annuity)
-    const targetWealthAt67 = targetPension * (1 - Math.pow(1 + i2, -monthsDecumulation)) / i2;
+    const inflationRate = 1.02; // 2% p.a.
+    const yearsAccumulation = targetAge - childAge;
 
-    // 2. Calculate Required Monthly Contribution
-    // FV of savings from childAge to 67
-    // FV = C * ((1+i)^n - 1) / i * (1+i)  (Annuity Due - start of month)
+    // Adjusted Target Amount if inflation is included
+    const actualTargetAmount = includeInflation && yearsAccumulation > 0
+      ? targetAmount * Math.pow(inflationRate, yearsAccumulation)
+      : targetAmount;
+
+    // Calculate Required Monthly Contribution to reach actualTargetAmount at 18
     const i1 = Math.pow(netRateAccumulation, 1 / 12) - 1;
-    const yearsAccumulation = 67 - childAge;
     const monthsAccumulation = yearsAccumulation * 12;
 
     let calcedContribution = 0;
     if (monthsAccumulation > 0) {
-      if (childAge < 18) {
-        // Two phases: before and after 80% withdrawal at age 18
-        const months1 = (18 - childAge) * 12;
-        const months2 = (67 - 18) * 12;
-        const fvFactor1 = ((Math.pow(1 + i1, months1) - 1) / i1) * (1 + i1);
-        const fvFactor2 = ((Math.pow(1 + i1, months2) - 1) / i1) * (1 + i1);
-        const growthPhase2 = Math.pow(1 + i1, months2);
-        // FV@67 = C * (0.2 * fvFactor1 * growthPhase2 + fvFactor2)
-        calcedContribution = targetWealthAt67 / (0.2 * fvFactor1 * growthPhase2 + fvFactor2);
-      } else {
-        // No withdrawal (started at or after 18)
-        const fvFactor = ((Math.pow(1 + i1, monthsAccumulation) - 1) / i1) * (1 + i1);
-        calcedContribution = targetWealthAt67 / fvFactor;
-      }
+      // FV factor for annuity due (start of month)
+      const fvFactor = ((Math.pow(1 + i1, monthsAccumulation) - 1) / i1) * (1 + i1);
+      calcedContribution = actualTargetAmount / fvFactor;
     }
 
-    // 3. Generate Data Points for Chart
-    const dataPoints: { age: number; wealth: number }[] = [];
+    // Generate Data Points
+    const dataPoints = [];
     let currentWealth = 0;
 
     const milestonesVals = {
-      at18Before: 0,
-      withdrawalAt18: 0,
-      at18After: 0,
+      at18: 0,
       at25: 0,
       at40: 0,
-      at67: targetWealthAt67
+      at67: 0
     };
 
-    // Monthly Growth Factor for Accumulation
     const growthFactor = Math.pow(netRateAccumulation, 1 / 12);
 
-    for (let age = childAge; age < 67; age++) {
+    dataPoints.push({ age: childAge, wealth: 0 }); // Startpunkt
+
+    for (let age = childAge; age < endAge; age++) {
       // Calculate 12 months
       for (let m = 0; m < 12; m++) {
         currentWealth += calcedContribution;
@@ -79,41 +57,32 @@ function App() {
 
       const displayAge = age + 1;
 
-      // At age 18: record value, withdraw 80%, record remainder
-      if (displayAge === 18 && childAge < 18) {
-        milestonesVals.at18Before = currentWealth;
-        milestonesVals.withdrawalAt18 = currentWealth * 0.8;
-
-        // Push pre-withdrawal data point
-        dataPoints.push({ age: 18, wealth: Math.round(currentWealth) });
-
-        // Withdraw 80%
+      if (displayAge === targetAge) {
+        milestonesVals.at18 = currentWealth;
+        // Point exactly at 18 BEFORE withdrawal
+        dataPoints.push({ age: displayAge, wealth: Math.round(currentWealth) });
+        // 80% withdrawal
         currentWealth *= 0.2;
-        milestonesVals.at18After = currentWealth;
-
-        // Push post-withdrawal data point
-        dataPoints.push({ age: 18.1, wealth: Math.round(currentWealth) });
-        continue;
+        // Point exactly at 18 AFTER withdrawal for sharp visual drop
+        dataPoints.push({ age: displayAge, wealth: Math.round(currentWealth) });
+      } else {
+        dataPoints.push({
+          age: displayAge,
+          wealth: Math.round(currentWealth),
+        });
       }
 
       if (displayAge === 25) milestonesVals.at25 = currentWealth;
       if (displayAge === 40) milestonesVals.at40 = currentWealth;
-
-      dataPoints.push({
-        age: displayAge,
-        wealth: Math.round(currentWealth),
-      });
+      if (displayAge === 67) milestonesVals.at67 = currentWealth;
     }
-
-    // Fix milestone at 67 to be exactly the calculated target
-    milestonesVals.at67 = currentWealth;
 
     return {
       monthlyContribution: calcedContribution,
       data: dataPoints,
       milestones: milestonesVals
     };
-  }, [childAge, monthlyPension, inflationAdjusted]);
+  }, [childAge, targetAmount, includeInflation]);
 
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(val);
@@ -122,10 +91,10 @@ function App() {
   return (
     <div className="min-h-screen bg-white text-[#222] font-sans p-8 flex flex-col items-center">
       <header className="text-center mb-12">
-        <h1 className="text-4xl md:text-5xl font-bold text-[#8bbd2a] mb-6">Sparen für das Alter</h1>
+        <h1 className="text-4xl md:text-5xl font-bold text-[#8bbd2a] mb-6">Sparen für die Zukunft</h1>
         <div className="flex flex-col md:flex-row justify-center items-center gap-2 md:gap-8 text-lg font-medium text-gray-700">
           <p>
-            Früh anfangen heißt: <span className="font-['Caveat'] text-3xl font-bold">Zukunft möglich machen.</span>
+            Früh anfangen heißt: <span className="font-['Caveat'] text-3xl font-bold">Träume möglich machen.</span>
           </p>
         </div>
       </header>
@@ -134,89 +103,87 @@ function App() {
         {/* Left Column: Controls */}
         <div className="lg:col-span-4 space-y-8">
 
-          {/* Pension Slider */}
-          <div className="bg-white p-[30px] rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
-            <div className="flex justify-between items-center mb-5">
-              <label className="text-sm font-bold tracking-wider text-[#1a1a1a]">ZUSATZRENTE</label>
+          {/* Target Amount Slider */}
+          <div className="bg-white p-8 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
+              <label className="text-sm font-bold tracking-wider text-[#1a1a1a]">WUNSCHBETRAG ZUM 18. GEBURTSTAG</label>
             </div>
-            <div className="text-center mb-5">
-              <span className="text-3xl font-bold text-[#8bbd2a]">{monthlyPension.toLocaleString('de-DE')} €</span>
+            <div className="text-center mb-6">
+              <span className="text-3xl font-bold text-[#8bbd2a]">{targetAmount.toLocaleString('de-DE')} €</span>
             </div>
             <input
               type="range"
-              min="300"
-              max="3000"
-              step="50"
+              min="1000"
+              max="50000"
+              step="500"
               className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#8bbd2a]"
-              value={monthlyPension}
-              onChange={(e) => setMonthlyPension(Number(e.target.value))}
+              value={targetAmount}
+              onChange={(e) => setTargetAmount(Number(e.target.value))}
             />
-            <div className="flex justify-between mt-2 text-xs text-gray-300">
-              <span>300 €</span><span>3.000 €</span>
+            <div className="flex justify-between mt-2 text-xs text-gray-300 mb-6">
+              <span>1.000 €</span><span>50.000 €</span>
             </div>
 
-            <div className="mt-5 flex items-center gap-3">
+            <label className="flex items-center space-x-3 cursor-pointer">
               <input
                 type="checkbox"
-                id="inflation"
-                checked={inflationAdjusted}
-                onChange={(e) => setInflationAdjusted(e.target.checked)}
-                className="w-5 h-5 rounded border-gray-300 text-[#8bbd2a] focus:ring-[#8bbd2a]"
+                className="w-5 h-5 rounded border-gray-300 text-[#8bbd2a] focus:ring-[#8bbd2a] cursor-pointer"
+                checked={includeInflation}
+                onChange={(e) => setIncludeInflation(e.target.checked)}
               />
-              <label htmlFor="inflation" className="text-sm font-medium text-gray-700 select-none cursor-pointer">
-                Inflation berücksichtigen (2% p.a.)
-              </label>
-            </div>
+              <span className="text-sm font-medium text-gray-700">Inflation berücksichtigen (2% p.a.)</span>
+            </label>
           </div>
 
           {/* Age Slider */}
-          <div className="bg-white p-[30px] rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
-            <div className="flex justify-between items-center mb-5">
+          <div className="bg-white p-8 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
               <label className="text-sm font-bold tracking-wider text-[#1a1a1a]">SPAREN AB ALTER</label>
             </div>
-            <div className="text-center mb-5">
+            <div className="text-center mb-6">
               <span className="text-3xl font-bold text-[#8bbd2a]">{childAge} J.</span>
             </div>
             <input
               type="range"
               min="0"
-              max="50"
+              max="18"
               className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#8bbd2a]"
               value={childAge}
               onChange={(e) => setChildAge(Number(e.target.value))}
             />
             <div className="flex justify-between mt-2 text-xs text-gray-300">
-              <span>0</span><span>50</span>
+              <span>0</span><span>18</span>
             </div>
           </div>
 
-          {/* Contribution Display (formerly slider) */}
-          <div className="bg-white p-[30px] rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
-            <div className="flex justify-between items-center mb-5">
-              <label className="text-sm font-bold tracking-wider text-[#1a1a1a]">BENÖTIGTER SPARBEITRAG</label>
+          {/* Contribution Display */}
+          <div className="bg-white p-8 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
+              <label className="text-sm font-bold tracking-wider text-[#1a1a1a]">BENÖTIGTER SPARBEITRAG MONATLICH</label>
             </div>
-            <div className="text-center mb-5">
+            <div className="text-center mb-6">
               <span className="text-3xl font-bold text-[#8bbd2a]">{Math.round(monthlyContribution).toLocaleString('de-DE')} €</span>
             </div>
           </div>
 
-
-
         </div>
 
         {/* Right Column: Chart & Results */}
-        <div className="lg:col-span-8 bg-white p-8 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100 flex flex-col h-[674px]">
-          <div>
-            <h3 className="text-center text-sm font-bold text-[#1a1a1a] mb-8 uppercase tracking-widest">Vermögen aufbauen</h3>
+        <div className="lg:col-span-8 bg-white p-8 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100 flex flex-col min-h-[670px] lg:h-full">
+          <div className="flex-1 flex flex-col">
+            <h3 className="text-center text-sm font-bold text-[#1a1a1a] mb-2 uppercase tracking-widest">Beispielrechnung für den Vermögensaufbau</h3>
+            <p className="text-center text-[10px] leading-relaxed text-gray-400 mb-6 max-w-xl mx-auto">
+              Die Berechnung zeigt das angesparte Kapital bis zum 67. Lebensjahr. Zum 18. Geburtstag werden 80% des Vermögenswerts entnommen. Es wird von einer jährlichen Wertentwicklung von 6% netto ausgegangen. Es liegt kein konkretes Finanzprodukt zu Grunde.
+            </p>
 
-            <div className="h-[362px] w-full">
+            <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
                   data={data}
                   margin={{
                     top: 10,
-                    right: 30,
-                    left: 0,
+                    right: 40,
+                    left: 20,
                     bottom: 0,
                   }}
                 >
@@ -229,12 +196,12 @@ function App() {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                   <XAxis
                     type="number"
-                    domain={['dataMin', 'dataMax']}
+                    domain={[childAge, 67]}
                     dataKey="age"
                     axisLine={false}
                     tickLine={false}
                     tick={{ fill: '#666', fontSize: 12 }}
-                    ticks={[10, 20, 30, 40, 50, 60]}
+                    ticks={[childAge, 18, 25, 40, 67]}
                   />
                   <YAxis
                     width={100}
@@ -262,55 +229,25 @@ function App() {
           </div>
 
           {/* Milestones */}
-          <div className="mt-12">
-            <h4 className="text-center text-gray-500 text-xs uppercase tracking-widest mb-4 font-semibold">Depotwert im Alter von ...</h4>
-            {childAge < 18 ? (
-              <div className="grid grid-cols-4 gap-3">
-                <div className="bg-white border border-gray-200 rounded-lg p-4 text-center flex flex-col justify-center h-full">
+          <div className="mt-8">
+            <h4 className="text-center text-gray-500 text-xs uppercase tracking-widest mb-4 font-semibold">Vermögenswert im Alter von ...</h4>
+            <div className="grid grid-cols-4 gap-4">
+              {[
+                { age: 18, val: milestones.at18 },
+                { age: 25, val: milestones.at25 },
+                { age: 40, val: milestones.at40 },
+                { age: 67, val: milestones.at67 }
+              ].map((m, idx) => (
+                <div key={idx} className="bg-white border border-gray-200 rounded-lg p-4 text-center flex flex-col justify-center h-full">
                   <div className="text-[#8bbd2a] font-bold text-lg md:text-xl truncate leading-none mb-1">
-                    {formatCurrency(milestones.at18Before).replace('€', '').trim()} €
+                    {formatCurrency(m.val).replace('€', '').trim()} €
                   </div>
                   <div className="text-gray-400 text-xs font-medium uppercase">
-                    Depot 18 J.
+                    {m.age} Jahren
                   </div>
                 </div>
-                {[
-                  { age: 25, val: milestones.at25 },
-                  { age: 40, val: milestones.at40 },
-                  { age: 67, val: milestones.at67 }
-                ].map((m, idx) => (
-                  <div key={idx} className="bg-white border border-gray-200 rounded-lg p-4 text-center flex flex-col justify-center h-full">
-                    <div className="text-[#8bbd2a] font-bold text-lg md:text-xl truncate leading-none mb-1">
-                      {formatCurrency(m.val).replace('€', '').trim()} €
-                    </div>
-                    <div className="text-gray-400 text-xs font-medium uppercase">
-                      {m.age} Jahren
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-4 gap-4">
-                {[
-                  { age: 18, val: milestones.at18Before },
-                  { age: 25, val: milestones.at25 },
-                  { age: 40, val: milestones.at40 },
-                  { age: 67, val: milestones.at67 }
-                ].map((m, idx) => (
-                  <div key={idx} className="bg-white border border-gray-200 rounded-lg p-4 text-center flex flex-col justify-center h-full">
-                    <div className="text-[#8bbd2a] font-bold text-lg md:text-xl truncate leading-none mb-1">
-                      {formatCurrency(m.val).replace('€', '').trim()} €
-                    </div>
-                    <div className="text-gray-400 text-xs font-medium uppercase">
-                      {m.age} Jahren
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <p className="text-center text-[10px] text-gray-400 mt-6">
-              Annahme: Zum 18. Lebensjahr werden 80 % des Depotwertes entnommen. Depotwert bis zum Alter von 100 Jahren aufgebraucht, Wertentwicklung netto 6%.
-            </p>
+              ))}
+            </div>
           </div>
         </div>
       </div>
